@@ -607,6 +607,438 @@ deployment.extensions/nginx-deployment resumed
 
 **会话黏连（session sticky）** 光靠Deployment很难解决
 
+## [18 | 深入理解StatefulSet（一）：拓扑状态](https://time.geekbang.org/column/article/41017)
+
+StatefulSet 的核心功能，就是通过某种方式记录这些状态，然后在 Pod 被重新创建时，能够为新 Pod 恢复这些状态
+
+- 使用Service访问
+  - VIP(Virtual IP)方式
+  - DNS方式
+    - Normal Service  
+    访问该域名，解析到的是Service后面的VIP
+    - Headless Service  
+    访问该域名，解析到的是某个Pod的IP
+
+- Headless Service 的作用
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  ports:
+  - port: 80
+    name: web
+  clusterIP: None
+  selector:
+    app: nginx
+```
+clusterIP字段的值是: None, 这个Service没有一个VIP作为“头”，这也就是Headless的含义。这个Service创建后没有VIP，以DNS的方式暴露出它代理的Pod。 Pod的IP地址会绑定如下DNS记录
+```
+<pod-name>.<svc-name>.<namespace>.svc.cluster.local
+```
+
+
+
+```
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: web
+spec:
+  serviceName: "nginx"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.9.1
+        ports:
+        - containerPort: 80
+          name: web
+```
+
+**serviceName: "nginx"** 该字段的作用，告诉StatefulSet 控制器， 在执行控制循环（Control Loop）的时候，请使用nginx 这个 Headless Service 来保证Pod 的“可解析身份”（Resolvable Identity）
+```
+$ kubectl get service nginx
+NAME      TYPE         CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+nginx     ClusterIP    None         <none>        80/TCP    10s
+
+$ kubectl get statefulset web
+NAME      DESIRED   CURRENT   AGE
+web       2         1         19s
+```
+
+```
+$ kubectl get pods -w -l app=nginx
+NAME      READY     STATUS    RESTARTS   AGE
+web-0     0/1       Pending   0          0s
+web-0     0/1       Pending   0         0s
+web-0     0/1       ContainerCreating   0         0s
+web-0     1/1       Running   0         19s
+web-1     0/1       Pending   0         0s
+web-1     0/1       Pending   0         0s
+web-1     0/1       ContainerCreating   0         0s
+web-1     1/1       Running   0         20s
+```
+StatefulSet 给它所管理的所有 Pod 的名字，进行了编号，编号规则是：-  
+从 0 开始累加，与 StatefulSet 的每个 Pod 实例一一对应，绝不重复  
+Pod 的创建，也是严格按照编号顺序进行的。前一个Pod进入到Running且为Ready之前，下一个Pod一直处于Pending
+
+```
+$ kubectl run -i --tty --image busybox dns-test --restart=Never --rm /bin/sh
+$ nslookup web-0.nginx
+Server:    10.0.0.10
+Address 1: 10.0.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      web-0.nginx
+Address 1: 10.244.1.7
+
+$ nslookup web-1.nginx
+Server:    10.0.0.10
+Address 1: 10.0.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      web-1.nginx
+Address 1: 10.244.2.7
+```
+```
+$ kubectl delete pod -l app=nginx
+pod "web-0" deleted
+pod "web-1" deleted
+```
+```
+$ kubectl get pod -w -l app=nginx
+NAME      READY     STATUS              RESTARTS   AGE
+web-0     0/1       ContainerCreating   0          0s
+NAME      READY     STATUS    RESTARTS   AGE
+web-0     1/1       Running   0          2s
+web-1     0/1       Pending   0         0s
+web-1     0/1       ContainerCreating   0         0s
+web-1     1/1       Running   0         32s
+```
+这两个 Pod 删除之后，Kubernetes 会按照原先编号的顺序，创建出了两个新的 Pod。并且，Kubernetes 依然 **为它们分配了与原来相同的“网络身份”**：web-0.nginx 和 web-1.nginx  
+通过这种严格的对应规则，**StatefulSet 就保证了 Pod 网络标识的稳定性**
+
+再次用nslook查看
+```
+$ kubectl run -i --tty --image busybox dns-test --restart=Never --rm /bin/sh
+$ nslookup web-0.nginx
+Server:    10.0.0.10
+Address 1: 10.0.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      web-0.nginx
+Address 1: 10.244.1.8
+
+$ nslookup web-1.nginx
+Server:    10.0.0.10
+Address 1: 10.0.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      web-1.nginx
+Address 1: 10.244.2.8
+```
+
+## [19 | 深入理解StatefulSet（二）：存储状态](https://time.geekbang.org/column/article/41154)
+
+第一步：定义一个 PVC，声明想要的 Volume 的属性：
+```
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: pv-claim
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+```
+第二步：在应用的 Pod 中，声明使用这个 PVC：
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pv-pod
+spec:
+  containers:
+    - name: pv-container
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "http-server"
+      volumeMounts:
+        - mountPath: "/usr/share/nginx/html"
+          name: pv-storage
+  volumes:
+    - name: pv-storage
+      persistentVolumeClaim:
+```
+在 Pod 的 Volumes 定义中，只需要声明它的类型是 persistentVolumeClaim，指定 PVC 的名字，而完全不必关心 Volume 本身的定义
+
+- PV（Persistent Volume）
+  - 执行以下YAML后，k8s会为pvc绑定pv
+```
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name: pv-volume
+  labels:
+    type: local
+spec:
+  capacity:
+    storage: 10Gi
+  rbd:
+    monitors:
+    - '10.16.154.78:6789'
+    - '10.16.154.82:6789'
+    - '10.16.154.83:6789'
+    pool: kube
+    image: foo
+    fsType: ext4
+    readOnly: true
+    user: admin
+    keyring: /etc/ceph/keyring
+    imageformat: "2"
+    imagefeatures: "layering"
+```
+
+**PVC与PV，就像“接口” 和“实现”**   
+开发者只要知道并会使用“接口”，即：PVC；而运维人员则负责“接口”绑定具体的实现，即：PV。  
+避免了因为向开发者暴露过多的存储系统细节而带来的隐患。
+
+**PVC、PV 的设计，也使得 StatefulSet 对存储状态的管理成为了可能**
+
+Kubernetes 的 StatefulSet 实现对应用存储状态的管理的方式
+- 首先，StatefulSet 的控制器直接管理的是 Pod
+  - Pod的名字是固定不变的
+- 其次，Kubernetes 通过 Headless Service，为这些有编号的 Pod，在 DNS 服务器中生成带有同样编号的 DNS 记录
+  - DNS记录也固定不变
+- 最后，StatefulSet 还为每一个 Pod 分配并创建一个同样编号的 PVC
+
+**Pod被删除后，它对应的PVC，PV并不会被删除。StatefullSet控制器重新创建出Pod后，因Pod名字，DNS记录不变，重新对应它现有的PVC和PV**
+
+## [20 | 深入理解StatefulSet（三）：有状态应用实践](https://time.geekbang.org/column/article/41217)
+
+XtraBackup 是业界主要使用的开源 MySQL 备份和恢复工具
+
+## [21 | 容器化守护进程的意义：DaemonSet](https://time.geekbang.org/column/article/41366)
+
+- DaemonSet 的主要作用  
+在 Kubernetes 集群里，运行一个 Daemon Pod
+  - 这个 Pod 运行在 Kubernetes 集群里的每一个节点（Node）上
+  - 每个节点上只有一个这样的 Pod 实例
+  - 随着节点的增减而增减
+
+Docker 容器里应用的日志，默认会保存在宿主机的 **/var/lib/docker/containers/{{. 容器 ID}}/{{. 容器 ID}}-json.log** 里
+
+在 DaemonSet 上，我们一般都应该加上resources 字段，来限制它的 CPU 和内存使用，防止它占用过多的宿主机资源
+
+**nodeAffinity**  
+在指定的 Node 上创建新 Pod
+- 例子
+  - requiredDuringSchedulingIgnoredDuringExecution: 这个 nodeAffinity 必须在每次调度的时候予以考虑
+  - 这个 Pod，将来只允许运行在“metadata.name”是“node-geektime”的节点上
+```
+补上
+```
+
+**DaemonSet Controller 会在创建 Pod的时候，自动在这个 Pod 的 API 对象里，加上这样一个 nodeAffinity 定义**
+
+DaemonSet会给Pod加上一个与调度相关的字段: tolerations, 使得Pod”容忍“(tolerations)某些Node的”污点“(Taint)
+
+一般情况下，被标记了 unschedulable“污点”的 Node，是不会有任何Pod被调度上去的（effect: NoSchedule)
+
+## [22 | 撬动离线业务：Job与CronJob](https://time.geekbang.org/column/article/41607)
+
+Job API例子
+
+```
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pi
+spec:
+  parallelism: 2
+  completions: 4
+  template:
+    spec:
+      containers:
+      - name: pi
+        image: resouer/ubuntu-bc
+        command: ["sh", "-c", "echo 'scale=10000; 4*a(1)' | bc -l "]
+      restartPolicy: Never
+  backoffLimit: 4
+```
+spec.backoffLimitJob: 失败时重试的次数
+spec.activeDeadlineSeconds: 设置最长运行时间
+spec.parallelism: 最大的并行数
+spec.completions: 最小的完成数
+
+Job对象创建后，它的Pod模板被自动加上controller-uid=< 一个随机字符串 >的Lable。
+Job对象本身会加上Lable相对应的Selector以保证它与Pod的对应关系。
+
+Job里的restartPolicy只能被设置为：Never / OnFailure
+
+- CronJob API例子  
+CronJob是Job对象的控制器  
+  - spec.concurrencyPolicy
+    - Allow: 默认情况，这意味着这些 Job 可以同时存在
+    - Forbid: 该创建周期会被跳过，不创建新的Pod
+    - Replace: 新产生的 Job 会替换旧的、没有执行完的 Job
+```
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: hello
+spec:
+  schedule: "*/1 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: hello
+            image: busybox
+            args:
+            - /bin/sh
+            - -c
+            - date; echo Hello from the Kubernetes cluster
+          restartPolicy: OnFailure
+```
+
+## [23 | 声明式API与Kubernetes编程范式](https://time.geekbang.org/column/article/41769)
+
+- Istio 项目
+  - 2017 年 5 月，Google、IBM 和 Lyft 公司，共同宣布了 Istio 开源项目的诞生
+  - Istio 最根本的组件，是运行在每一个应用 Pod 里的**Envoy 容器(高性能 C++ 网络代理)**  
+  Istio 项目，则把Envoy 容器以 sidecar 容器的方式，运行在了每一个被治理的应用 Pod 中
+  ![](images/istio.png)
+
+Istio 会将这个 Envoy 容器本身的定义，以 ConfigMap 的方式保存在 Kubernetes当中
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-initializer
+data:
+  config: |
+    containers:
+      - name: envoy
+        image: lyft/envoy:845747db88f102c0fd262ab234308e9e22f693a1
+        command: ["/usr/local/bin/envoy"]
+        args:
+          - "--concurrency 4"
+          - "--config-path /etc/envoy/envoy.json"
+          - "--mode serve"
+        ports:
+          - containerPort: 80
+            protocol: TCP
+        resources:
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+        volumeMounts:
+          - name: envoy-conf
+            mountPath: /etc/envoy
+    volumes:
+      - name: envoy-conf
+        configMap:
+          name: envoy
+```
+
+## [24 | 深入解析声明式API（一）：API对象的奥秘](https://time.geekbang.org/column/article/41876)
+
+## [26 | 基于角色的权限控制：RBAC](https://time.geekbang.org/column/article/42154)
+
+k8s的API对象保存在Etcd里，通过访问kube-apiserver(的授权)实现对API的调用  
+负责完成授权（Authorization）工作的机制，就是RBAC（Role-Based Access Control）
+
+- RBAC的三个概念
+  - Role: 一组规则，定义了一组对 Kubernetes API 对象的操作权限
+  - Subject: 被作用者
+  - RoleBinding: 定义了“被作用者”和“角色”的绑定关系
+
+
+## [28 | PV、PVC、StorageClass，这些到底在说啥？](https://time.geekbang.org/column/article/42698)
+
+- PVC和PV进行绑定需要满足一下两点
+  1. PV和PVC的spec字段
+  1. PV和PVC的storageClassName字段必须一样  
+
+  使用例子
+  ```
+  apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    role: web-frontend
+spec:
+  containers:
+  - name: web
+    image: nginx
+    ports:
+      - name: web
+        containerPort: 80
+    volumeMounts:
+        - name: nfs
+          mountPath: "/usr/share/nginx/html"
+  volumes:
+  - name: nfs
+    persistentVolumeClaim:
+      claimName: nfs
+  ```  
+
+PVC 和 PV 的设计，其实跟“面向对象”的思想完全一致  
+PVC可以理解为持久化储存的“接口”，提供某种持久化储存的描述，但不提供具体实现  
+PV负责持久化储存的实现
+
+PersistentVolumeController: 负责PV和PVC的对应
+
+- Dynamic Provisioning: 自动创建 PV 的机制
+  - 其核心在于StorageClass的API
+    - StorageClass的作用是创建PV的模板
+- Static Provisioning: PV与PVC的手动对应
+  - 在做绑定决策的时候 会考虑 PV 和 PVC 的 StorageClass 定义
+
+- StorageClass的定义
+  - PV 的属性。比如，存储类型、Volume 的大小等等
+  - 创建这种 PV 需要用到的存储插件。比如，Ceph 等等
+
+```
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claim1
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: block-service
+  resources:
+    requests:
+      storage: 30Gi
+```
+
+Kubernetes 只会将 StorageClass 相同的 PVC 和 PV 绑定起来
+
+- 以下图片说明了PV，PVC，StorageClass三者的关系  
+指定 PV 的 Provisioner（存储插件） 必须支持 Dynamic Provisioning
+  - PVC: Pod 想要使用的持久化存储的属性，比如存储的大小、读写权限等
+  - PV: 一个具体的 Volume 的属性，比如 Volume 的类型、挂载目录、远程存储服务器地址等
+  - StorageClass: PV 的模板。并且，只有同属于一个 StorageClass的 PV 和 PVC，才可以绑定在一起
+![](images/pvc_storage-class_pv.png)
+
+
+
 
 
 
