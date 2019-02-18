@@ -31,7 +31,7 @@ Linux容器实现的最基本的原理 → 容器只是一种特殊的进程
 
 - chroot: change root file system → 改变进程的根目录到指定位置
   - Namespace基于chroot的不断改良
-- 挂载在容器根目录上，用来为容易进程提供隔离后执行环境的文件系统(rootfs) → 容器镜像(OS文件 + 目录 + 应用)
+- 挂载在容器根目录上，用来为容器进程提供隔离后执行环境的文件系统(rootfs) → 容器镜像(OS文件 + 目录 + 应用)
     - rootfs不包括OS内核
     - 提供一致性
 
@@ -1036,6 +1036,144 @@ Kubernetes 只会将 StorageClass 相同的 PVC 和 PV 绑定起来
   - PV: 一个具体的 Volume 的属性，比如 Volume 的类型、挂载目录、远程存储服务器地址等
   - StorageClass: PV 的模板。并且，只有同属于一个 StorageClass的 PV 和 PVC，才可以绑定在一起
 ![](images/pvc_storage-class_pv.png)
+
+## [29 | PV、PVC体系是不是多此一举？从本地持久化卷谈起](https://time.geekbang.org/column/article/42819)
+
+- Local Persistent Volume: 直接使用宿主机上的本地磁盘目录  
+**适用范围**
+  - 高优先级的系统应用，需要在多个不同节点上存储数据，并且对对 I/O 较为敏感
+    - 分布式数据存储: MongoDB、Cassandra 等
+    - 分布式文件系统: GlusterFS、Ceph 等
+    - 需要在本地磁盘上进行大量数据缓存的分布式应用
+    - 使用 Local Persistent Volume 的应用必须具备数据备份和恢复的能力
+
+过滤条件VolumeBindingChecker: 在调度的时候考虑 Volume 分布
+
+Local Persistent Volume 目前尚不支持Dynamic Provisioning
+volumeBindingMode=WaitForFirstConsumer : 延迟绑定 → 延迟到Pod调度时
+
+## [32 | 浅谈容器网络](https://time.geekbang.org/column/article/64948)
+
+[The Layers of the OSI Model Illustrated](https://www.lifewire.com/layers-of-the-osi-model-illustrated-818017)
+
+- 网桥（Bridge）: 虚拟交换机作用的网络设备
+  - 工作在数据链路层（Data Link）的设备，主要功能是根据 MAC 地址学习来将数据包转发到网桥的不同端口（Port）上
+  - Docker项目会在宿主机上创建**docker0**的网桥，凡是链接在docker0网桥上的容器，就可以通过它来进行通信
+
+- Veth Pair: 容器连接到网桥是需要的虚拟设备
+  - 特点
+    1. 创建出来后，总是以两张虚拟网卡（Veth Peer）的形式成对出现的
+    2. 从其中一个“网卡”发出的数据包，可以直接出现在与它对应的另一张“网卡”上，哪怕这两个“网卡” 在不同的 Network Namespace 里 → **Veth Pair 常常被用作连接不同 Network Namespace 的“网线”**
+
+![](images/network_communication_between_contains.png)
+
+![](images/network_communication_between_host_container.png)
+
+![](images/network_communication_betwenn_containers_2.png)
+
+![](images/overlay_network.png)
+**Overlay Network（覆盖网络）**  
+在已有的宿主机网络上，再通过软件构建一个覆盖在已有宿主机网络之上的、可以把所有容器连通在一起的虚拟网络
+
+## [33 | 深入解析容器跨主机网络](https://time.geekbang.org/column/article/65287)
+
+## [34 | Kubernetes网络模型与CNI网络插件](https://time.geekbang.org/column/article/67351)
+
+## [35 | 解读Kubernetes三层网络方案](https://time.geekbang.org/column/article/67775)
+
+## [36 | 为什么说Kubernetes只有soft multi-tenancy？](https://time.geekbang.org/column/article/68316)
+
+Kubernetes 里的 Pod 默认都是“允许所有”（Accept All）的  
+Pod 可以接收来自任何发送方的请求;  也可以向任何接收方发送请求。  
+必须**通过 NetworkPolicy 对象来限制**
+
+Kubernetes 网络插件对 Pod 进行隔离，其实是靠在宿主机上生成 NetworkPolicy 对应的 iptable 规则来实现的
+
+## [37 | 找到容器不容易：Service、DNS与服务发现](https://time.geekbang.org/column/article/68636)
+
+k8s需要Service的理由: Pod的**IP不固定** 以及 Pod实例之间的**负载均衡需求**
+
+Service(ClusterIP模式)有自己的VIP，负载均衡方式为Round Robin
+
+**Service : kube-proxy + iptables**
+
+- iptables模式
+  - 宿主机有大量Pod时，kube-proxy 需要在控制循环里不断地刷新这些规则来确保它们始终是正确的，所以大量宿主机的 CPU 资源被占用
+
+- IPVS模式
+  - 工作原理跟 iptables 模式类似
+  - 创建Service后，kube-proxy 首先会在宿主机上创建一个虚拟网卡（叫作：kube-ipvs0），并为它分配 Service VIP 作为 IP 地址，通过 Linux 的 IPVS 模块，为这个 IP 地址设置三个 IPVS 虚拟主机，并设置这三个虚拟主机之间使用轮询模(rr) 来作为负载均衡策略
+  - IPVS 并不需要在宿主机上为每个 Pod 设置 iptables 规则，而是把对这些“规则”的处理放到了内核态， 从而极大地降低了维护这些规则的代价。
+
+
+
+## [38 | 从外界连通Service与Service调试“三板斧”](https://time.geekbang.org/column/article/68964)
+
+- 访问k8s里的Service
+  1. NodePort
+  2. LoadBalancer
+    - 适用于公有云
+    - 使用CloudProvider 跟公有云本身的 API 进行对接
+  3. ExternalName
+    - 在kube-dns里添加一天CNAME记录
+  4. 为Service指定公网IP
+
+## [39 | 谈谈Service与Ingress](https://time.geekbang.org/column/article/69214)
+
+Ingress是k8s对“反响代理”的抽象
+
+Ingress Controller会根据定义的Ingress对象，提供对应的代理能力，比如 Nginx、HAProxy、Envoy、Traefik等
+
+Ingress只能工作在七层; Service只能工作在四层
+
+## [40 | Kubernetes的资源模型与资源管理](https://time.geekbang.org/column/article/69678)
+
+- Kubernetes 里 Pod 的 CPU 和内存资源，分为 limits 和 requests 两种情况
+  - 在调度的时候，kube-scheduler 只会按照requests 的值进行计算；设置 Cgroups 限制的时候，kubelet 则会按照limits 的值来进行设置
+```
+spec.containers[].resources.limits.cpu
+spec.containers[].resources.limits.memory
+spec.containers[].resources.requests.cpu
+spec.containers[].resources.requests.memory
+```
+
+- k8s的QoS模型: 根据不同的requests和limits的设置方式将Pod划分不同的QoS
+  - Guaranteed 类别
+    - Pod 里的每一个 Container 都同时设置了 requests 和 limits，并且 requests和 limits 值相等
+  - Burstable 类别
+    - 不满足 Guaranteed 的条件，但至少有一个 Container 设置了 requests
+  - BestEffort 类别
+    - 没有设置requests和limits
+
+
+- 当宿主机资源紧张时，kubelet对Pod进行Eviction（资源回收）时使用QoS划分
+  - Soft Eviction: 可以这是一段缓冲时间; Hard Eviction: 立即执行
+  - Eviction执行时选择的对象Pod: **BestEffort → Burstable → Guaranteed**
+
+
+- cpuset 的设置
+  - 把容器绑定到某个 CPU 的核上，操作系统在 CPU 之间进行上下文切换的次数大大减少，容器里应用的性能会得到大幅提升。
+  - 实现方式
+    - Pod 必须是 Guaranteed 的 QoS 类型
+    - 将 Pod 的 CPU 资源的 requests 和 limits 设置为同一个相等的整数值
+    - 一下例子该 Pod 就会被绑定在 2 个独占的 CPU 核上
+
+  ```
+  spec:
+  containers:
+  - name: nginx
+    image: nginx
+    resources:
+      limits:
+        memory: "200Mi"
+        cpu: "2"
+      requests:
+        memory: "200Mi"
+        cpu: "2"
+    ```
+
+## [41 | 十字路口上的Kubernetes默认调度器](https://time.geekbang.org/column/article/69890)
+
 
 
 

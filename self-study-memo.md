@@ -56,6 +56,10 @@
 
 [29 | PV、PVC体系是不是多此一举？从本地持久化卷谈起](https://time.geekbang.org/column/article/42819)
 
+[30 | 编写自己的存储插件：FlexVolume与CSI](https://time.geekbang.org/column/article/44245)
+
+[31 | 容器存储实践：CSI插件编写指南](https://time.geekbang.org/column/article/64392)
+
 [32 | 浅谈容器网络](https://time.geekbang.org/column/article/64948)
 
 [33 | 深入解析容器跨主机网络](https://time.geekbang.org/column/article/65287)
