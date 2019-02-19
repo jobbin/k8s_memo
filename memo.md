@@ -1174,10 +1174,33 @@ spec.containers[].resources.requests.memory
 
 ## [41 | 十字路口上的Kubernetes默认调度器](https://time.geekbang.org/column/article/69890)
 
+## [42 | Kubernetes默认调度器调度策略解析](https://time.geekbang.org/column/article/70211)
 
+## [45 | 幕后英雄：SIG-Node与CRI](https://time.geekbang.org/column/article/71056)
 
+kublet → Container Runtime Interface → Docker等
 
+![kubelet_achitecture](images/kubelet_achitecture.png)
 
+dockershimde: 将CRI请求转换成Docker API请求发送给Docker Daemon
+
+## [46 | 解读 CRI 与 容器运行时](https://time.geekbang.org/column/article/71499)
+
+## [47 | 绝不仅仅是安全：Kata Containers 与 gVisor](https://time.geekbang.org/column/article/71606)
+
+Intel OTC (Open Source Technology Center): Intel Clear Containers
++
+HyperHQ: runV
+↓
+2017年 Kata Containers → 轻量级虚拟机
+
+Google gVisor:给容器进程配置一个"独立内核",对容器暴露Linux内核ABI([Application Binary Interface](https://ja.wikipedia.org/wiki/Application_Binary_Interface))
+
+Kata Containers: 使用传统虚拟化技术，虚拟硬件模拟出虚拟，然后在虚拟街里安装一个裁剪后的Linux内核来实现强隔离
+
+gVisor: 用Go语言模拟出一个运行在用户态的OS内核，通过该内核来代替容器进程向宿主机发起有限的，可控的系统调用。
+
+## [48 | Prometheus、Metrics Server与Kubernetes监控体系](https://time.geekbang.org/column/article/72281)
 
 
 
