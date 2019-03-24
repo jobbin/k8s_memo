@@ -132,7 +132,7 @@ lrwxrwxrwx 1 root root 0 Aug 13 14:05 uts -> uts:[4026532277]
 
 ```
 
-以下命令: 启动一个容器，该容易与容器4ddf4638572d共用Network Namespace.
+以下命令: 启动一个容器，该容器与容器4ddf4638572d共用Network Namespace.
 
 ```
 $ docker run -it --net container:4ddf4638572d busybox ifconfig
@@ -318,9 +318,8 @@ Pod 级别的属性: 调度、网络、存储，以及安全相关的
   ```
   - NodeName : 一旦 Pod 的这个字段被赋值，Kubernetes 项目就会被认为这个 Pod 已经经过了调度，调度的结果就是赋值的节点名字
   - HostAliases：定义了 Pod 的 hosts 文件（比如 /etc/hosts ）里的内容
-
-  ```
-  apiVersion: v1
+```
+apiVersion: v1
 kind: Pod
 ...
 spec:
@@ -331,13 +330,14 @@ spec:
     - "bar.remote"
 ...
 
-  ```
+```
+
   这个 Pod 启动后，/etc/hosts 文件的内容将如下
   ```
   cat /etc/hosts
+  
   # Kubernetes-managed hosts file.
   127.0.0.1 localhost
-  ...
   10.244.135.10 hostaliases-pod
   10.1.2.3 foo.remote
   10.1.2.3 bar.remote
@@ -379,10 +379,10 @@ Projected Volume的目的是**为容器提供预先定义好的数据**
     - k8s提供默认“服务账户”（default Service Account），Pod可以直接使用这个默认的 Service Account，而无需显示地声明挂载它。
       - Pod 创建完成，容器里的应用就可以直接从这个默认 ServiceAccountToken 的挂载目录访问到授权信息和文件。
       - 容器内的路径固定，/var/run/secrets/kubernetes.io/serviceaccount
-      ```
-      $ ls /var/run/secrets/kubernetes.io/serviceaccount
-ca.crt namespace  token
-      ```
+        ```
+        $ ls /var/run/secrets/kubernetes.io/serviceaccount
+        ca.crt namespace  token
+        ```
 
 容器健康检查和恢复机制
 
@@ -516,7 +516,7 @@ for {
 
 更新Deployment 的 Pod 模板需要遵循一种叫做 **滚动更新(rolling update)** 的方式，这依赖于**ReplicaSet **
 
-一个 ReplicaSet 对象，其实就是由副本数目的定义和一个 Pod 模板组成的。Deployment控制器实际操纵的是ReplicaSetd对象
+一个 ReplicaSet 对象，其实就是由副本数目的定义和一个 Pod 模板组成的。Deployment控制器实际操纵的是ReplicaSet对象
 
 ```
 apiVersion: apps/v1
@@ -976,8 +976,8 @@ k8s的API对象保存在Etcd里，通过访问kube-apiserver(的授权)实现对
   1. PV和PVC的storageClassName字段必须一样  
 
   使用例子
-  ```
-  apiVersion: v1
+```
+apiVersion: v1
 kind: Pod
 metadata:
   labels:
@@ -1112,10 +1112,10 @@ Service(ClusterIP模式)有自己的VIP，负载均衡方式为Round Robin
 - 访问k8s里的Service
   1. NodePort
   2. LoadBalancer
-    - 适用于公有云
-    - 使用CloudProvider 跟公有云本身的 API 进行对接
+      - 适用于公有云
+      - 使用CloudProvider 跟公有云本身的 API 进行对接
   3. ExternalName
-    - 在kube-dns里添加一天CNAME记录
+      - 在kube-dns里添加一天CNAME记录
   4. 为Service指定公网IP
 
 ## [39 | 谈谈Service与Ingress](https://time.geekbang.org/column/article/69214)
