@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-nas
+spec:
+  capacity:
+    storage: 5Gi
+  storageClassName: nas
+  accessModes:
+    - ReadWriteMany
+  flexVolume:
+    driver: "alicloud/nas"
+    options:
+      server: "<Your NAS mount address>"
+      path: "/k8s" # path in NAS
+      mode: "750" 
+      vers: "3" # 3/4.0
